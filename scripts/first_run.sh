@@ -89,11 +89,54 @@ dn: ou=projects,$SLAPD_DC
 objectClass: organizationalUnit
 ou: projects
 EOF
-    echo "TLS_REQCERT $TLS_REQCERT" >> /etc/ldap/ldap.conf
     ldapadd -w $SLAPD_PASSWORD -x -D cn=admin,$SLAPD_DC -f /etc/ldapscripts/create_users_and_groups.ldif
     ldapaddgroup $SLAPD_BINDGROUP
     ldapadduser ${SLAPD_BINDUSER} $SLAPD_BINDGROUP
     ldapsetpasswd ${SLAPD_BINDUSER} $(slappasswd -s ${SLAPD_BINDPWD})
+    echo "TLS_REQCERT $TLS_REQCERT" >> /etc/ldap/ldap.conf
+    if [ "$TLS_REQCERT" != "never" ]; then
+        mkdir -p /etc/ssl/templates /etc/ssl/private /etc/ssl/certs
+        cat > /etc/ssl/templates/ca_server.conf <<EOF
+cn = LDAP Server CA
+ca
+cert_signing_key            
+EOF
+            cat > /etc/ssl/templates/ldap_server.conf <<EOF
+organization = "$SLAPD_ORG"
+cn = $(hostname -f)
+tls_www_server
+encryption_key
+signing_key
+expiration_days = 3652        
+EOF
+        certtool -p --outfile /etc/ssl/private/ca_server.key
+        certtool -s --load-privkey /etc/ssl/private/ca_server.key --template /etc/ssl/templates/ca_server.conf --outfile /etc/ssl/certs/ca_server.pem
+        certtool -p --sec-param high --outfile /etc/ssl/private/ldap_server.key
+        certtool -c --load-privkey /etc/ssl/private/ldap_server.key --load-ca-certificate /etc/ssl/certs/ca_server.pem --load-ca-privkey /etc/ssl/private/ca_server.key --template /etc/ssl/templates/ldap_server.conf --outfile /etc/ssl/certs/ldap_server.pem
+        usermod -aG ssl-cert openldap
+        chown :ssl-cert /etc/ssl/private/ldap_server.key
+        chmod 640 /etc/ssl/private/ldap_server.key
+        
+        cat > /etc/ldapscripts/add_certs.ldif <<EOF
+dn: cn=config
+changetype: modify
+add: olcTLSCACertificateFile
+olcTLSCACertificateFile: /etc/ssl/certs/ca_server.pem
+
+add: olcTLSCertificateFile
+olcTLSCertificateFile: /etc/ssl/certs/ldap_server.pem
+
+add: olcTLSCertificateKeyFile
+olcTLSCertificateKeyFile: /etc/ssl/private/ldap_server.key
+
+dn: cn=config
+changetype: modify
+add: olcSecurity
+olcSecurity: tls=1
+EOF
+        ldapmodify -H ldapi:// -Y EXTERNAL -f /etc/ldapscripts/add_certs.ldif
+        ln -s /etc/ssl/certs/ca_server.pem /etc/ssl/certs/ca-certificates.crt
+    fi
     kill -TERM `cat /var/run/slapd/slapd.pid`
     echo "Configuration finished."
 }

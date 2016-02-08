@@ -9,7 +9,7 @@ RUN mkdir -p /etc/ldap && \
     mkdir -p /run/slapd
 
 RUN apt-get update && \
-  apt-get -y install slapd ldap-utils ldapscripts && \
+  apt-get -y install slapd ldap-utils ldapscripts gnutls-bin ssl-cert && \
   rm -rf /var/lib/apt/lists/*
 
 ADD ldapscripts/ /etc/ldapscripts/
